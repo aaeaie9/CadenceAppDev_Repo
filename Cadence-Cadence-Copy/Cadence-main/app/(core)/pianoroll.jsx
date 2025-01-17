@@ -1,63 +1,113 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGlobalContext } from '../../context/GlobalProvider';
 
 const PianoRoll = () => {
   const { activeTranscription } = useGlobalContext();
-
-  // Ensure notes are always an array
   const notes = activeTranscription?.notes || [];
 
-  // Define piano keys from A2 to C6 (A2 at the bottom, C6 at the top)
-  const pianoKeys = [
-    "A2", "A#2", "B2", "C3", "C#3", "D3", "D#3", "E3", "F3", "F#3", "G3", "G#3", "A3", "A#3", "B3", 
-    "C4", "C#4", "D4", "D#4", "E4", "F4", "F#4", "G4", "G#4", "A4", "A#4", "B4", "C5", "C#5", "D5", 
-    "D#5", "E5", "F5", "F#5", "G5", "G#5", "A5", "A#5", "B5", "C6"
-  ];
+  const midiMapping = {
+    "C6": 84, "B5": 83, "A#5": 82, "A5": 81, "G#5": 80, "G5": 79, 
+    "F#5": 78, "F5": 77, "E5": 76, "D#5": 75, "D5": 74, "C#5": 73, 
+    "C5": 72, "B4": 71, "A#4": 70, "A4": 69, "G#4": 68, "G4": 67,
+    "F#4": 66, "F4": 65, "E4": 64, "D#4": 63, "D4": 62, "C#4": 61,
+    "C4": 60, "B3": 59, "A#3": 58, "A3": 57, "G#3": 56, "G3": 55,
+    "F#3": 54, "F3": 53, "E3": 52, "D#3": 51, "D3": 50, "C#3": 49,
+    "C3": 48, "B2": 47, "A#2": 46, "A2": 45
+  };
 
-  // Reverse pianoKeys to have A2 at the bottom and C6 at the top
-  const reversedPianoKeys = pianoKeys.reverse();
+  const totalColumns = useMemo(() => {
+    if (notes.length === 0) return 110;
+
+    const lastNoteEnd = Math.max(...notes.map(note => {
+      const endTime = note.time + note.duration;
+      return endTime;
+    }));
+
+    const paddingColumns = 20;
+    const requiredColumns = Math.ceil(lastNoteEnd / 0.1) + paddingColumns;
+    
+    return Math.max(110, requiredColumns);
+  }, [notes]);
+
+  const pianoKeys = Object.keys(midiMapping).sort((a, b) => midiMapping[b] - midiMapping[a]);
+
+  const isSharpNote = (note) => note.includes('#');
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        {/* Vertical Scroll View for the whole grid */}
-        <ScrollView
-          style={styles.scrollView}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Grid Container for Rows */}
-          <View style={styles.gridContainer}>
-            {/* Horizontal Scroll View for the entire grid */}
-            <ScrollView
-              horizontal
-              style={styles.horizontalScrollView}
-              showsHorizontalScrollIndicator={false}
-            >
-              {/* Render all rows together in one scrollable area */}
-              <View style={styles.gridCellsContainer}>
-                {reversedPianoKeys.map((key, rowIndex) => (
-                  <View key={rowIndex} style={styles.row}>
-                    {/* Vertical Scroll View for the note label */}
-                    <View style={styles.noteCell}>
-                      <Text style={styles.keyText}>{key}</Text>
+        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+          <View style={styles.content}>
+            {/* Fixed Labels Column */}
+            <View style={styles.labelsColumn}>
+              {/* Empty cell to match timestamp row height */}
+              <View style={[styles.emptyCell, styles.timestampRowHeight]}>
+                <Text style={styles.keyText}></Text>
+              </View>
+              {pianoKeys.map((key, rowIndex) => (
+                <View 
+                  key={rowIndex} 
+                  style={[
+                    styles.noteCell,
+                    isSharpNote(key) && styles.sharpNoteCell
+                  ]}
+                >
+                  <Text style={[
+                    styles.keyText,
+                    isSharpNote(key) && styles.sharpKeyText
+                  ]}>
+                    {key}
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Scrollable Grid */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View>
+                {/* Timestamp Row */}
+                <View style={styles.timestampRow}>
+                  {Array(totalColumns).fill(0).map((_, colIndex) => (
+                    <View key={colIndex} style={styles.timestampCell}>
+                      <Text style={styles.timestampText}>{(colIndex * 0.1).toFixed(1)}</Text>
                     </View>
-                    {/* Render Transcription Grid Cells */}
-                    {Array(20).fill(0).map((_, colIndex) => (
-                      <View
-                        key={colIndex}
-                        style={[
-                          styles.gridCell,
-                          notes.includes(rowIndex + 57) &&
-                          colIndex < notes.filter(n => n === (rowIndex + 57)).length
-                            ? styles.activeCell
-                            : null
-                        ]}
-                      />
-                    ))}
-                  </View>
-                ))}
+                  ))}
+                </View>
+
+                {/* Grid */}
+                <View style={styles.gridContainer}>
+                  {pianoKeys.map((key, rowIndex) => (
+                    <View key={rowIndex} style={styles.row}>
+                      {Array(totalColumns).fill(0).map((_, colIndex) => {
+                        const isActive = notes.some(note => {
+                          const noteRow = pianoKeys.findIndex(k => midiMapping[k] === note.midi);
+                          const startColumn = Math.round(note.time / 0.1);
+                          const durationCells = Math.round(note.duration / 0.1);
+                          const endColumn = startColumn + durationCells;
+
+                          return (
+                            rowIndex === noteRow &&
+                            colIndex >= startColumn &&
+                            colIndex < endColumn
+                          );
+                        });
+
+                        return (
+                          <View
+                            key={colIndex}
+                            style={[
+                              styles.gridCell,
+                              isSharpNote(key) && styles.sharpGridCell,
+                              isActive ? styles.activeCell : null
+                            ]}
+                          />
+                        );
+                      })}
+                    </View>
+                  ))}
+                </View>
               </View>
             </ScrollView>
           </View>
@@ -66,8 +116,6 @@ const PianoRoll = () => {
     </SafeAreaView>
   );
 };
-
-export default PianoRoll;
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -81,40 +129,83 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
-  horizontalScrollView: {
+  content: {
     flexDirection: 'row',
   },
-  gridCellsContainer: {
-    flexDirection: 'column',
-    flex: 1,
+  labelsColumn: {
+    position: 'absolute',
+    left: 0,
+    zIndex: 1,
+    backgroundColor: '#fff',
   },
   gridContainer: {
     flexDirection: 'column',
+  },
+  timestampRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 5,
+    backgroundColor: '#f7f7f7',
+    marginLeft: 20,
+    height: 20, // Explicitly set height
+  },
+  timestampRowHeight: {
+    height: 25, // Match the timestamp row height + marginBottom
+  },
+  emptyCell: {
+    width: 30,
+    height: 20,
+  },
+  timestampCell: {
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  timestampText: {
+    fontSize: 8,
+    color: '#333',
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   noteCell: {
-    width: 20,  // Further reduced width for note name cells
-    height: 20, // Further reduced height for note name cells
+    width: 40,
+    height: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    borderBottomColor: '#ddd',
-    borderBottomWidth: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#ffff',
+    borderColor: '#c4c4c4',
+    borderBottomColor: '#c4c4c4',
+    borderRightColor: '#c4c4c4',
+    borderTopWidth: 0.5,
+    borderBottomWidth: 0.5,
+    borderRightWidth: 0.5,
+  },
+  sharpNoteCell: {
+    backgroundColor: '#000',
   },
   keyText: {
-    fontSize: 6,  // Further reduced font size for note names
+    fontSize: 6,
+    color: '#000',
+  },
+  sharpKeyText: {
+    color: '#fff',
   },
   gridCell: {
-    width: 20,  // Further reduced size for grid cells
-    height: 20, // Further reduced size for grid cells
-    backgroundColor: '#f1f1f1',
-    borderColor: '#ddd',
-    borderWidth: 1,
+    width: 30,
+    height: 20,
+    backgroundColor: '#f1f2f4',
+    borderColor: '#c4c4c4',
+    borderWidth: 0.3
+  },
+  sharpGridCell: {
+    backgroundColor: '#e0e0e0',
   },
   activeCell: {
-    backgroundColor: '#FF5722',  // Highlight active cells
+    backgroundColor: '#773adb',
   },
 });
+
+export default PianoRoll;
