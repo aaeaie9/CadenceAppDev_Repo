@@ -20,8 +20,8 @@ def detect_pitch(file_path):
     hop_s = win_s // 2  # Hop size
     samplerate = 44100  # Sample rate
 
-    # Create pitch object
-    pitch_o = pitch("yin", win_s, hop_s, samplerate)
+    # Create pitch detection object (YIN method)
+    pitch_o = aubio.pitch("yin", win_s, hop_s, samplerate)
     pitch_o.set_unit("midi")  # Set output to MIDI
 
     # Read the audio file
@@ -31,9 +31,13 @@ def detect_pitch(file_path):
         raise ValueError(f"Sample rate of audio file ({sr}) does not match the expected rate ({samplerate})")
 
     # Initialize pitch list
-    pitches = []
+    pitch_data = []
 
     # Process audio data
+    last_pitch_val = None  # To keep track of the last detected pitch
+    note_start_time = None  # To keep track of when the note starts
+    note_end_time = None  # To keep track of when the note ends
+
     for i in range(0, len(audio_data), hop_s):
         samples = audio_data[i:i + hop_s]
         if len(samples) < hop_s:
@@ -43,11 +47,79 @@ def detect_pitch(file_path):
             samples = samples[:, 0]  # Use the first channel if stereo
         samples = samples.astype(np.float32)
 
-        pitch_val = pitch_o(samples)[0]
-        if pitch_val > 0:
-            pitches.append(int(pitch_val))
+        pitch_val = pitch_o(samples)[0]  # Get pitch in MIDI
+        timestamp = i / samplerate  # Timestamp in seconds
 
-    return pitches
+        if pitch_val > 0:  # If a pitch is detected
+            if pitch_val != last_pitch_val:
+                if last_pitch_val is not None and note_start_time is not None:
+                    # Record the previous note with its duration
+                    if note_end_time is not None:
+                        pitch_data.append({
+                            "midi": int(last_pitch_val),
+                            "time": note_start_time,
+                            "duration": note_end_time - note_start_time
+                        })
+                    else:
+                        # If the note end time is still None, set it to the current timestamp
+                        pitch_data.append({
+                            "midi": int(last_pitch_val),
+                            "time": note_start_time,
+                            "duration": timestamp - note_start_time
+                        })
+                # Start a new note
+                note_start_time = timestamp
+
+            # Update last values
+            last_pitch_val = pitch_val
+            note_end_time = None  # Reset note end time as a new note is detected
+
+        else:
+            # If pitch is lost and a previous pitch existed, record the note duration
+            if last_pitch_val is not None and note_start_time is not None:
+                note_end_time = timestamp
+                pitch_data.append({
+                    "midi": int(last_pitch_val),
+                    "time": note_start_time,
+                    "duration": note_end_time - note_start_time
+                })
+                last_pitch_val = None  # Reset for next note
+                note_start_time = None
+
+    # Handle the last note (if it wasn't appended)
+    if last_pitch_val is not None and note_start_time is not None:
+        if note_end_time is None:
+            note_end_time = timestamp  # End time is the last timestamp processed
+        pitch_data.append({
+            "midi": int(last_pitch_val),
+            "time": note_start_time,
+            "duration": note_end_time - note_start_time
+        })
+
+    # Combine consecutive identical notes and add durations
+    combined_pitch_data = []
+    previous_note = None
+
+    for note in pitch_data:
+        if previous_note and previous_note["midi"] == note["midi"]:
+            # If the same note, combine durations
+            previous_note["duration"] += note["duration"]
+        else:
+            # If a new note, push the previous note and start a new one
+            if previous_note:
+                combined_pitch_data.append(previous_note)
+            previous_note = note
+
+    # Add the last note if it exists
+    if previous_note:
+        combined_pitch_data.append(previous_note)
+
+    # Round the durations and times to 1 decimal place after combining durations
+    for note in combined_pitch_data:
+        note["time"] = round(note["time"], 1)  # Round the time
+        note["duration"] = round(note["duration"], 1)  # Round the duration
+
+    return combined_pitch_data
 
 @app.route('/upload-audio', methods=['POST'])
 def upload_audio():
